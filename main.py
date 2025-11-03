@@ -16,20 +16,12 @@ VALID_API_KEYS = {
     "BACKUP-KEY-2024-SECURE-ACCESS": True
 }
 
-# ONLY allow requests from your website server IP
-ALLOWED_IPS = {"172.174.228.24", "18.138.101.249"}  # Your website server IP
-
 # ----------------- Security Middleware -----------------
 @app.before_request
 def authenticate():
     client_ip = request.remote_addr
     
-    # 1. Check IP Address - ONLY your website server can access
-    if client_ip not in ALLOWED_IPS:
-        logger.warning(f"🚨 BLOCKED: Unauthorized IP attempt: {client_ip}")
-        return jsonify({"error": "Access denied"}), 403
-    
-    # 2. Check API Key
+    # Check API Key (mandatory)
     api_key = request.headers.get('X-API-Key')
     if not api_key or api_key not in VALID_API_KEYS:
         logger.warning(f"🔑 INVALID API KEY from {client_ip}")
@@ -112,13 +104,12 @@ def status():
     
     return jsonify({
         "status": "API is running",
-        "port": 7788,
         "active_apis": active_apis,
         "total_apis": len(all_apis),
         "security": {
             "api_key_auth": "ENABLED",
-            "ip_whitelisting": "ENABLED",
-            "allowed_ips": list(ALLOWED_IPS),
+            "ip_whitelisting": "DISABLED",
+            "rate_limiting": "DISABLED",
             "unlimited_bombing": "ENABLED"
         }
     })
@@ -127,10 +118,11 @@ def status():
 def security_info():
     """Security configuration info"""
     return jsonify({
-        "allowed_ips": list(ALLOWED_IPS),
         "api_keys_configured": len(VALID_API_KEYS),
-        "security_level": "HIGH",
-        "protection": "IP Whitelisting + API Key Authentication"
+        "security_level": "API_KEY_ONLY",
+        "protection": "API Key Authentication Only",
+        "rate_limiting": "DISABLED",
+        "ip_restrictions": "DISABLED"
     })
 
 @app.route('/')
@@ -138,7 +130,7 @@ def home():
     return jsonify({
         "message": "SMS Bombing API - SECURED",
         "usage": "GET /num=<mobile_number> with X-API-Key header",
-        "security": "IP Whitelisting + API Key Authentication - Only your website can access",
+        "security": "API Key Authentication Only - No IP Restrictions",
         "endpoints": {
             "bombing": "/num=<mobile_number>",
             "status": "/status",
@@ -164,10 +156,6 @@ def not_found(error):
 def internal_error(error):
     return jsonify({"error": "Internal server error"}), 500
 
-@app.errorhandler(403)
-def forbidden(error):
-    return jsonify({"error": "Access forbidden - IP not allowed"}), 403
-
 @app.errorhandler(401)
 def unauthorized(error):
     return jsonify({"error": "Unauthorized - Invalid API key"}), 401
@@ -175,13 +163,13 @@ def unauthorized(error):
 if __name__ == '__main__':
     print("=" * 60)
     print("🛡️  SECURE SMS Bombing API Starting...")
-    print(f"📍 Port: 7887")
     print(f"🔑 API Keys: {len(VALID_API_KEYS)} configured")
-    print(f"🌐 Allowed IPs: {ALLOWED_IPS}")
-    print(f"🛡️  Security: IP Whitelisting + API Key Authentication")
+    print(f"🛡️  Security: API Key Authentication Only")
     print(f"📈 Active APIs: {sum(1 for api in all_apis if not api.__name__.startswith('dummy'))}/{len(all_apis)}")
     print("=" * 60)
-    print("🚀 READY: Only your website can access this API!")
+    print("🚀 READY: Anyone with API key can access this API!")
     print("=" * 60)
     
-    app.run(debug=False, host='0.0.0.0', port=7887, threaded=True)
+    # Get port from environment variable (for Railway/Render) or use default
+    port = int(os.environ.get('PORT', 7887))
+    app.run(debug=False, host='0.0.0.0', port=port, threaded=True)

